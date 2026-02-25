@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>UrsBank</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+body{
+  margin:0;
+  font-family:'Segoe UI';
+  background: radial-gradient(circle at 20% 20%, #6a11cb, transparent 40%),
+              radial-gradient(circle at 80% 80%, #2575fc, transparent 40%),
+              #0f0c29;
+  height:100vh;
+  color:white;
+}
+.container{text-align:center;padding-top:60px;}
+.glass{
+  width:360px;
+  margin:auto;
+  padding:30px;
+  border-radius:20px;
+  backdrop-filter:blur(25px);
+  background:rgba(255,255,255,0.08);
+  box-shadow:0 0 60px rgba(138,43,226,0.3);
+}
+button{
+  width:100%;
+  padding:12px;
+  margin:10px 0;
+  border:none;
+  border-radius:12px;
+  background:linear-gradient(135deg,#9d4edd,#5a189a);
+  color:white;
+  cursor:pointer;
+}
+input{
+  width:100%;
+  padding:10px;
+  margin:8px 0;
+  border-radius:8px;
+  border:none;
+}
+.hidden{display:none;}
+.error{color:#ff4d6d;}
+.success{color:#00ff9d;}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<h1>UrsBank</h1>
+<p>Where your money grows — never disappears.</p>
+
+<div class="glass" id="home">
+<button onclick="showRegister()">Register</button>
+<button onclick="showLogin()">Login</button>
+</div>
+
+<div class="glass hidden" id="registerPage">
+<h3>Register</h3>
+<input id="regName" placeholder="Name">
+<input id="regEmail" placeholder="Email">
+<input id="regPhone" placeholder="Phone Number">
+<input id="regPassword" type="password" placeholder="Password">
+<button onclick="register()">Create Account</button>
+<p id="registerMsg"></p>
+<button onclick="goHome()">Back</button>
+</div>
+
+<div class="glass hidden" id="loginPage">
+<h3>Login</h3>
+<input id="loginEmail" placeholder="Email">
+<input id="loginPassword" type="password" placeholder="Password">
+<button onclick="login()">Login</button>
+<p id="loginMsg"></p>
+<button onclick="goHome()">Back</button>
+</div>
+
+<div class="glass hidden" id="dashboard">
+<h3>Dashboard</h3>
+<p>Balance: ₹ <span id="balance">0.00</span></p>
+<p id="actionMsg"></p>
+
+<button onclick="getBalance()">Refresh Balance</button>
+
+<button onclick="toggle('deposit')">Deposit</button>
+<div id="depositSection" class="hidden">
+<input id="depositAmount" type="number" placeholder="Amount">
+<button onclick="deposit()">Confirm Deposit</button>
+</div>
+
+<button onclick="toggle('withdraw')">Withdraw</button>
+<div id="withdrawSection" class="hidden">
+<input id="withdrawAmount" type="number" placeholder="Amount">
+<button onclick="withdraw()">Confirm Withdraw</button>
+</div>
+
+<button onclick="toggle('transfer')">Transfer</button>
+<div id="transferSection" class="hidden">
+<input id="transferPhone" placeholder="Receiver Phone">
+<input id="transferAmount" type="number" placeholder="Amount">
+<button onclick="transfer()">Confirm Transfer</button>
+</div>
+
+<button onclick="loadTransactions()">Transactions</button>
+<div id="transactionHistory" style="margin-top:15px;"></div>
+
+<button onclick="logout()">Logout</button>
+</div>
+
+</div>
+
+<script>
+let token="";
+
+function showMsg(id,text,type="success"){
+const el=document.getElementById(id);
+el.className=type;
+el.innerText=text;
+setTimeout(()=>el.innerText="",3000);
+}
+
+function showRegister(){
+home.classList.add("hidden");
+registerPage.classList.remove("hidden");
+}
+
+function showLogin(){
+home.classList.add("hidden");
+loginPage.classList.remove("hidden");
+}
+
+function goHome(){
+registerPage.classList.add("hidden");
+loginPage.classList.add("hidden");
+home.classList.remove("hidden");
+}
+
+function logout(){
+dashboard.classList.add("hidden");
+home.classList.remove("hidden");
+token="";
+}
+
+function toggle(id){
+document.getElementById(id+"Section").classList.toggle("hidden");
+}
+
+async function register(){
+try{
+const res=await fetch("/api/auth/register",{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify({
+cname:regName.value,
+email:regEmail.value,
+phone:regPhone.value,
+password:regPassword.value
+})
+});
+
+const data=await res.json();
+
+if(res.ok){
+showMsg("registerMsg","Registration successful 🎉");
+}else{
+showMsg("registerMsg",data.error || "Registration failed","error");
+}
+}catch(err){
+showMsg("registerMsg","Server error","error");
+}
+}
+
+async function login(){
+try{
+const res=await fetch("/api/auth/login",{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify({
+email:loginEmail.value,
+password:loginPassword.value
+})
+});
+
+const data=await res.json();
+
+if(data.error==="USER_NOT_FOUND"){
+showMsg("loginMsg","Please register before logging in","error");
+return;
+}
+
+if(data.error==="WRONG_PASSWORD"){
+showMsg("loginMsg","Incorrect password","error");
+return;
+}
+
+if(res.ok){
+    token = data.token;
+
+    // 🔥 THIS IS THE IMPORTANT LINE
+    localStorage.setItem("token", data.token);
+
+    showMsg("loginMsg","Login successful ✅");
+setTimeout(()=>{
+loginPage.classList.add("hidden");
+dashboard.classList.remove("hidden");
+getBalance();
+},800);
+}
+
+}catch(err){
+showMsg("loginMsg","Server error","error");
+}
+}
+
+async function getBalance(){
+try{
+const res=await fetch("/api/bank/balance",{
+headers:{Authorization:"Bearer "+token}
+});
+const data=await res.json();
+balance.innerText=parseFloat(data.balance || 0).toFixed(2);
+}catch(err){
+showMsg("actionMsg","Could not fetch balance","error");
+}
+}
+
+async function deposit(){
+try{
+const res=await fetch("/api/bank/deposit",{
+method:"POST",
+headers:{
+"Content-Type":"application/json",
+Authorization:"Bearer "+token
+},
+body:JSON.stringify({
+amount:Number(depositAmount.value)
+})
+});
+const data=await res.json();
+if(res.ok){
+getBalance();
+showMsg("actionMsg","Deposit successful 💰");
+}else{
+showMsg("actionMsg",data.message,"error");
+}
+}catch(err){
+showMsg("actionMsg","Server error","error");
+}
+}
+
+async function withdraw(){
+try{
+const res=await fetch("/api/bank/withdraw",{
+method:"POST",
+headers:{
+"Content-Type":"application/json",
+Authorization:"Bearer "+token
+},
+body:JSON.stringify({
+amount:Number(withdrawAmount.value)
+})
+});
+const data=await res.json();
+if(res.ok){
+getBalance();
+showMsg("actionMsg","Withdraw successful 💸");
+}else{
+showMsg("actionMsg",data.message,"error");
+}
+}catch(err){
+showMsg("actionMsg","Server error","error");
+}
+}
+
+async function transferMoney() {
+
+    const phone = document.getElementById("transferPhone").value.trim();
+    const amount = document.getElementById("transferAmount").value.trim();
+    const token = localStorage.getItem("token");
+    
+    if (!phone || !amount) {
+        showMsg("dashboardMsg", "Please fill all fields", "error");
+        return;
+    }
+
+    const res = await fetch("/api/bank/transfer", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+        },
+        body: JSON.stringify({
+            phone: phone,
+            amount: Number(amount)
+        })
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+        showMsg("dashboardMsg", "Transfer successful 💸", "success");
+        getBalance();
+    } else {
+        showMsg("dashboardMsg", data.message, "error");
+    }
+}
+
+async function loadTransactions() {
+    const container = document.getElementById("transactionHistory");
+
+    // ✅ If already open → close it
+    if (container.innerHTML.trim() !== "") {
+        container.innerHTML = "";
+        return;
+    }
+    const token = localStorage.getItem("token");
+
+    const res = await fetch("/api/bank/transactions", {
+        headers: {
+            "Authorization": "Bearer " + token
+        }
+    });
+
+    const data = await res.json();
+
+    let html = "<h3>Transaction History</h3>";
+
+    if (data.length === 0) {
+        html += "<p>No transactions found</p>";
+    } else {
+        data.forEach(tx => {
+            html += `<p>${tx.type} - ₹${tx.amount}</p>`;
+        });
+    }
+
+    document.getElementById("transactionHistory").innerHTML = html;
+}
+
+</script>
+
+</body>
+</html>
