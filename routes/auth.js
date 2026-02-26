@@ -17,19 +17,19 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'ALL_FIELDS_REQUIRED' });
     }
 
-    const [existingUser] = await db.query(
-      'SELECT * FROM customer WHERE email = ? OR phone = ?',
+    const existingUser = await db.query(
+      'SELECT * FROM customer WHERE email = $1 OR phone = $2',
       [email, phone]
     );
 
-    if (existingUser.length > 0) {
+    if (existingUser.rows.length > 0) {
       return res.status(400).json({ error: 'USER_ALREADY_EXISTS' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     await db.query(
-      'INSERT INTO customer (cname, email, phone, cpassword) VALUES (?, ?, ?, ?)',
+      'INSERT INTO customer (cname, email, phone, cpassword) VALUES ($1, $2, $3, $4)',
       [cname, email, phone, hashedPassword]
     );
 
@@ -56,16 +56,16 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'ALL_FIELDS_REQUIRED' });
     }
 
-    const [users] = await db.query(
-      'SELECT * FROM customer WHERE email = ?',
+    const result = await db.query(
+      'SELECT * FROM customer WHERE email = $1',
       [email]
     );
 
-    if (users.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(400).json({ error: 'USER_NOT_FOUND' });
     }
 
-    const user = users[0];
+    const user = result.rows[0];
 
     const isMatch = await bcrypt.compare(password, user.cpassword);
 

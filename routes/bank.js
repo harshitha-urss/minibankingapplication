@@ -10,16 +10,16 @@ GET BALANCE
 */
 router.get('/balance', verifyToken, async (req, res) => {
   try {
-    const [rows] = await db.query(
-      'SELECT balance FROM customer WHERE cid = ?',
+    const result = await db.query(
+      'SELECT balance FROM customer WHERE cid = $1',
       [req.user.cid]
     );
 
-    if (!rows.length) {
+    if (!result.rows.length) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json({ balance: Number(rows[0].balance).toFixed(2) });
+    res.json({ balance: Number(result.rows[0].balance).toFixed(2) });
 
   } catch (error) {
     console.error(error);
@@ -34,7 +34,8 @@ DEPOSIT
 ========================
 */
 router.post('/deposit', verifyToken, async (req, res) => {
-  const connection = await db.getConnection();
+  const client = await db.connect();
+
   try {
     const amount = Number(req.body.amount);
 
@@ -42,28 +43,28 @@ router.post('/deposit', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
-    await connection.beginTransaction();
+    await client.query('BEGIN');
 
-    await connection.query(
-      'UPDATE customer SET balance = balance + ? WHERE cid = ?',
+    await client.query(
+      'UPDATE customer SET balance = balance + $1 WHERE cid = $2',
       [amount, req.user.cid]
     );
 
-    await connection.query(
-      'INSERT INTO transactions (cid, type, amount) VALUES (?, ?, ?)',
+    await client.query(
+      'INSERT INTO transactions (cid, type, amount) VALUES ($1, $2, $3)',
       [req.user.cid, 'DEPOSIT', amount]
     );
 
-    await connection.commit();
+    await client.query('COMMIT');
 
     res.json({ message: 'Deposit successful' });
 
   } catch (error) {
-    await connection.rollback();
+    await client.query('ROLLBACK');
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   } finally {
-    connection.release();
+    client.release();
   }
 });
 
@@ -74,7 +75,8 @@ WITHDRAW
 ========================
 */
 router.post('/withdraw', verifyToken, async (req, res) => {
-  const connection = await db.getConnection();
+  const client = await db.connect();
+
   try {
     const amount = Number(req.body.amount);
 
@@ -82,50 +84,52 @@ router.post('/withdraw', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
-    await connection.beginTransaction();
+    await client.query('BEGIN');
 
-    const [rows] = await connection.query(
-      'SELECT balance FROM customer WHERE cid = ? FOR UPDATE',
+    const result = await client.query(
+      'SELECT balance FROM customer WHERE cid = $1 FOR UPDATE',
       [req.user.cid]
     );
 
-    const currentBalance = Number(rows[0].balance);
+    const currentBalance = Number(result.rows[0].balance);
 
     if (amount > currentBalance) {
-      await connection.rollback();
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: 'Insufficient balance' });
     }
 
-    await connection.query(
-      'UPDATE customer SET balance = balance - ? WHERE cid = ?',
+    await client.query(
+      'UPDATE customer SET balance = balance - $1 WHERE cid = $2',
       [amount, req.user.cid]
     );
 
-    await connection.query(
-      'INSERT INTO transactions (cid, type, amount) VALUES (?, ?, ?)',
+    await client.query(
+      'INSERT INTO transactions (cid, type, amount) VALUES ($1, $2, $3)',
       [req.user.cid, 'WITHDRAW', amount]
     );
 
-    await connection.commit();
+    await client.query('COMMIT');
 
     res.json({ message: 'Withdraw successful' });
 
   } catch (error) {
-    await connection.rollback();
+    await client.query('ROLLBACK');
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   } finally {
-    connection.release();
+    client.release();
   }
 });
 
 
 /*
 ========================
-TRANSFER (USING PHONE)
+TRANSFER
 ========================
 */
 router.post('/transfer', verifyToken, async (req, res) => {
+  const client = await db.connect();
+
   try {
     const { phone, amount } = req.body;
 
@@ -133,59 +137,65 @@ router.post('/transfer', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'Invalid input' });
     }
 
-    // Get sender
-    const [senderRows] = await db.query(
-      'SELECT * FROM customer WHERE cid = ?',
+    await client.query('BEGIN');
+
+    const senderResult = await client.query(
+      'SELECT * FROM customer WHERE cid = $1 FOR UPDATE',
       [req.user.cid]
     );
 
-    const sender = senderRows[0];
+    const sender = senderResult.rows[0];
 
     if (amount > sender.balance) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: 'Insufficient balance' });
     }
 
-    // Get receiver using phone
-    const [receiverRows] = await db.query(
-      'SELECT * FROM customer WHERE phone = ?',
+    const receiverResult = await client.query(
+      'SELECT * FROM customer WHERE phone = $1 FOR UPDATE',
       [phone]
     );
 
-    if (receiverRows.length === 0) {
+    if (!receiverResult.rows.length) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: 'Receiver not found' });
     }
 
-    const receiver = receiverRows[0];
+    const receiver = receiverResult.rows[0];
 
-    // Deduct from sender
-    await db.query(
-      'UPDATE customer SET balance = balance - ? WHERE cid = ?',
+    await client.query(
+      'UPDATE customer SET balance = balance - $1 WHERE cid = $2',
       [amount, sender.cid]
     );
 
-    // Add to receiver
-    await db.query(
-      'UPDATE customer SET balance = balance + ? WHERE cid = ?',
+    await client.query(
+      'UPDATE customer SET balance = balance + $1 WHERE cid = $2',
       [amount, receiver.cid]
     );
 
-    // Insert transactions
-    await db.query(
-      'INSERT INTO transactions (cid, type, amount) VALUES (?, ?, ?)',
+    await client.query(
+      'INSERT INTO transactions (cid, type, amount) VALUES ($1, $2, $3)',
       [sender.cid, 'TRANSFER', amount]
     );
 
-    await db.query(
-      'INSERT INTO transactions (cid, type, amount) VALUES (?, ?, ?)',
+    await client.query(
+      'INSERT INTO transactions (cid, type, amount) VALUES ($1, $2, $3)',
       [receiver.cid, 'RECEIVED', amount]
     );
+
+    await client.query('COMMIT');
 
     res.json({ message: 'Transfer successful' });
 
   } catch (error) {
+    await client.query('ROLLBACK');
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
+  } finally {
+    client.release();
   }
 });
+
 
 /*
 ========================
@@ -194,12 +204,12 @@ TRANSACTION HISTORY
 */
 router.get('/transactions', verifyToken, async (req, res) => {
   try {
-    const [transactions] = await db.query(
-      'SELECT type, amount, created_at FROM transactions WHERE cid = ? ORDER BY created_at DESC',
+    const result = await db.query(
+      'SELECT type, amount, created_at FROM transactions WHERE cid = $1 ORDER BY created_at DESC',
       [req.user.cid]
     );
 
-    res.json(transactions);
+    res.json(result.rows);
 
   } catch (error) {
     console.error(error);
